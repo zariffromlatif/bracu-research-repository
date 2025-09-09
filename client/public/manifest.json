@@ -1,0 +1,26 @@
+{
+  "short_name": "BRACU Research",
+  "name": "BRACU Research Repository",
+  "icons": [
+    {
+      "src": "/img/bracu_logo_12-0-2022.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "/img/bracu_logo_12-0-2022.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/img/bracu_logo_12-0-2022.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
+

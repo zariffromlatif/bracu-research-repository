@@ -1,0 +1,36 @@
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+  padding: 0;
+}
+
+/* Fix text color visibility issues */
+.paper-abstract {
+  color: #333 !important;
+  line-height: 1.6;
+}
+
+.card-body p {
+  color: #333 !important;
+}
+
+.card-body {
+  color: #333 !important;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 0 0.5rem;
+  }
+}

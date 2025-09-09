@@ -99,14 +99,116 @@ const db = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Test database connection
-db.query('SELECT NOW()', (err, result) => {
+// Test database connection and create tables
+db.query('SELECT NOW()', async (err, result) => {
   if (err) {
     console.error('Error connecting to PostgreSQL database:', err);
     return;
   }
   console.log('Connected to PostgreSQL database successfully');
+  
+  // Create tables if they don't exist
+  try {
+    await createTablesIfNotExist();
+    console.log('Database tables verified/created successfully');
+  } catch (error) {
+    console.error('Error creating tables:', error);
+  }
 });
+
+// Function to create tables automatically
+async function createTablesIfNotExist() {
+  const fs = require('fs');
+  const path = require('path');
+  
+  try {
+    // Read the PostgreSQL schema file
+    const schemaPath = path.join(__dirname, 'postgresql_schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      await db.query(schema);
+      console.log('Database schema imported successfully');
+    } else {
+      console.log('Schema file not found, creating tables manually...');
+      // Create essential tables manually if schema file is missing
+      await createEssentialTables();
+    }
+  } catch (error) {
+    console.error('Error importing schema:', error);
+    await createEssentialTables();
+  }
+}
+
+async function createEssentialTables() {
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      role VARCHAR(20) DEFAULT 'author',
+      department_id INTEGER,
+      faculty_id INTEGER,
+      designation VARCHAR(20) DEFAULT 'student',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS departments (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      description TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS faculties (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      description TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS papers (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(500) NOT NULL,
+      abstract TEXT NOT NULL,
+      keywords TEXT,
+      category_text VARCHAR(255),
+      author_id INTEGER NOT NULL,
+      corresponding_author VARCHAR(255),
+      supervisor VARCHAR(255),
+      co_supervisor VARCHAR(255),
+      department_id INTEGER,
+      publication_date DATE,
+      doi VARCHAR(255),
+      file_url VARCHAR(500),
+      file_name VARCHAR(255),
+      file_size INTEGER,
+      status VARCHAR(20) DEFAULT 'pending',
+      admin_notes TEXT,
+      version INTEGER DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  ];
+  
+  for (const tableQuery of tables) {
+    await db.query(tableQuery);
+  }
+  
+  // Insert sample data
+  await db.query(`
+    INSERT INTO departments (name, description) VALUES
+    ('Department of Computer Science and Engineering (CSE)', 'School of Data & Sciences'),
+    ('Department of Architecture', 'School of Architecture & Design'),
+    ('Department of Economics and Social Sciences (ESS)', 'School of Humanities & Social Sciences')
+    ON CONFLICT (name) DO NOTHING
+  `);
+  
+  await db.query(`
+    INSERT INTO users (name, email, password, role, department_id, designation) VALUES
+    ('System Administrator', 'admin@bracu.ac.bd', '$2b$10$VpNn9nJvvQWz4hPzQzQzQeJ9J9J9J9J9J9J9J9J9J9J9J9J9J9J9J', 'admin', 1, 'faculty'),
+    ('Sample Author', 'author@bracu.ac.bd', '$2b$10$VpNn9nJvvQWz4hPzQzQzQeJ9J9J9J9J9J9J9J9J9J9J9J9J9J9J9J', 'author', 1, 'faculty')
+    ON CONFLICT (email) DO NOTHING
+  `);
+}
 
 // Authentication Routes
 

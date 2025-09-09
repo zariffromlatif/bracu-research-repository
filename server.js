@@ -1,5 +1,5 @@
 const express = require('express');
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
 const helmet = require('helmet');
@@ -93,21 +93,19 @@ const requireAuthor = (req, res, next) => {
   next();
 };
 
-// MySQL Connection
-const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: '',
-  database: 'bracu_repo',
-  port: 3306
+// PostgreSQL Connection
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://root:@localhost:5432/bracu_repo',
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-db.connect((err) => {
+// Test database connection
+db.query('SELECT NOW()', (err, result) => {
   if (err) {
-    console.error('Error connecting to MySQL database:', err);
+    console.error('Error connecting to PostgreSQL database:', err);
     return;
   }
-  console.log('Connected to MySQL database: bracu_repo');
+  console.log('Connected to PostgreSQL database successfully');
 });
 
 // Authentication Routes

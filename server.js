@@ -95,9 +95,14 @@ const requireAuthor = (req, res, next) => {
 
 // PostgreSQL Connection
 const db = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://root:@localhost:5432/bracu_repo',
+  connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+
+// Fallback connection for development
+if (!process.env.DATABASE_URL) {
+  console.log('No DATABASE_URL found, using default connection');
+}
 
 // Test database connection and create tables
 db.query('SELECT NOW()', async (err, result) => {
@@ -193,21 +198,43 @@ async function createEssentialTables() {
     await db.query(tableQuery);
   }
   
-  // Insert sample data
+  // Insert sample departments
   await db.query(`
     INSERT INTO departments (name, description) VALUES
-    ('Department of Computer Science and Engineering (CSE)', 'School of Data & Sciences'),
     ('Department of Architecture', 'School of Architecture & Design'),
-    ('Department of Economics and Social Sciences (ESS)', 'School of Humanities & Social Sciences')
+    ('Department of Computer Science and Engineering (CSE)', 'School of Data & Sciences'),
+    ('Department of Economics and Social Sciences (ESS)', 'School of Humanities & Social Sciences'),
+    ('Department of Electrical & Electronic Engineering (EEE)', 'BSRM School of Engineering'),
+    ('Department of English and Humanities (ENH)', 'School of Humanities & Social Sciences'),
+    ('Department of Law (LLB)', 'School of Law'),
+    ('Department of Mathematics & Natural Sciences (MNS)', 'School of Data & Sciences'),
+    ('Department of Pharmacy', 'School of Pharmacy')
     ON CONFLICT (name) DO NOTHING
   `);
   
+  // Insert sample faculties/schools
+  await db.query(`
+    INSERT INTO faculties (name, description) VALUES
+    ('School of Architecture & Design', 'Architecture, Urban Planning, and Design disciplines'),
+    ('School of Data & Sciences', 'Computer Science, Mathematics, and Data Sciences'),
+    ('School of Humanities & Social Sciences', 'Economics, English, Humanities, and Social Sciences'),
+    ('BSRM School of Engineering', 'Engineering disciplines including EEE'),
+    ('School of Law', 'Legal studies and jurisprudence'),
+    ('School of Pharmacy', 'Pharmaceutical sciences and practice')
+    ON CONFLICT (name) DO NOTHING
+  `);
+  
+  // Hash passwords properly for PostgreSQL
+  const bcrypt = require('bcryptjs');
+  const adminPassword = await bcrypt.hash('admin123', 10);
+  const authorPassword = await bcrypt.hash('author123', 10);
+  
   await db.query(`
     INSERT INTO users (name, email, password, role, department_id, designation) VALUES
-    ('System Administrator', 'admin@bracu.ac.bd', '$2b$10$VpNn9nJvvQWz4hPzQzQzQeJ9J9J9J9J9J9J9J9J9J9J9J9J9J9J9J', 'admin', 1, 'faculty'),
-    ('Sample Author', 'author@bracu.ac.bd', '$2b$10$VpNn9nJvvQWz4hPzQzQzQeJ9J9J9J9J9J9J9J9J9J9J9J9J9J9J9J', 'author', 1, 'faculty')
+    ('System Administrator', 'admin@bracu.ac.bd', $1, 'admin', 1, 'faculty'),
+    ('Sample Author', 'author@bracu.ac.bd', $2, 'author', 1, 'faculty')
     ON CONFLICT (email) DO NOTHING
-  `);
+  `, [adminPassword, authorPassword]);
 }
 
 // Authentication Routes

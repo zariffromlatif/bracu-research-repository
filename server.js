@@ -553,11 +553,11 @@ app.get('/api/categories', (req, res) => {
 // Get dashboard statistics (public - no auth required)
 app.get('/api/stats', (req, res) => {
   const queries = {
-    papers: 'SELECT COUNT(*) as count FROM papers WHERE status = "approved"',
-    authors: 'SELECT COUNT(DISTINCT author_id) as count FROM papers WHERE status = "approved"',
+    papers: "SELECT COUNT(*) as count FROM papers WHERE status = 'approved'",
+    authors: "SELECT COUNT(DISTINCT author_id) as count FROM papers WHERE status = 'approved'",
     departments: 'SELECT COUNT(*) as count FROM departments',
     // BRAC University was founded in 2001, so calculate years from 2001
-    years: 'SELECT (YEAR(CURDATE()) - 2001) as count'
+    years: 'SELECT (EXTRACT(YEAR FROM CURRENT_DATE) - 2001) as count'
   };
 
   const stats = {};

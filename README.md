@@ -293,9 +293,7 @@ CORS_ORIGIN=https://your-domain.com
 ## 📞 Support
 
 For technical support or questions:
-- Email: [support-email]
-- GitHub Issues: [repository-issues]
-- Documentation: [docs-link]
+- Email: zarif.latif.biz@gmail.com
 
 ## 📄 License
 

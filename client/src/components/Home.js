@@ -24,9 +24,19 @@ const Home = () => {
   const fetchStats = async () => {
     try {
       const response = await axios.get('/api/stats');
+      console.log('Stats received:', response.data);
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
+      // Set fallback values
+      const currentYear = new Date().getFullYear();
+      const bracuYears = currentYear - 2001;
+      setStats({
+        papers: 0,
+        authors: 0,
+        departments: 8,
+        years: bracuYears
+      });
     } finally {
       setLoadingStats(false);
     }

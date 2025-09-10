@@ -1,5 +1,5 @@
 const express = require('express');
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 const cors = require('cors');
 const path = require('path');
 const helmet = require('helmet');
@@ -93,33 +93,90 @@ const requireAuthor = (req, res, next) => {
   next();
 };
 
-// PostgreSQL Connection
-const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+// MySQL Connection Pool (promise-based)
+const db = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'bracu_repo',
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  multipleStatements: true
 });
 
 // Fallback connection for development
-if (!process.env.DATABASE_URL) {
-  console.log('No DATABASE_URL found, using default connection');
+if (!process.env.DB_HOST) {
+  console.log('Using default MySQL connection settings');
 }
 
 // Test database connection and create tables
-db.query('SELECT NOW()', async (err, result) => {
-  if (err) {
-    console.error('Error connecting to PostgreSQL database:', err);
-    return;
-  }
-  console.log('Connected to PostgreSQL database successfully');
-  
-  // Create tables if they don't exist
+(async () => {
   try {
+    await db.query('SELECT NOW()');
+    console.log('Connected to MySQL database successfully');
+
     await createTablesIfNotExist();
     console.log('Database tables verified/created successfully');
-  } catch (error) {
-    console.error('Error creating tables:', error);
+
+    await verifyEssentialData();
+  } catch (err) {
+    console.error('Error initializing database:', err);
   }
-});
+})();
+
+// Function to verify essential data exists
+async function verifyEssentialData() {
+  try {
+    // Check if departments exist
+    const [deptRows] = await db.query('SELECT COUNT(*) as count FROM departments');
+    if ((deptRows[0] && deptRows[0].count) === 0) {
+      console.log('No departments found, inserting sample data...');
+      await createEssentialTables();
+    } else {
+      console.log(`Found ${deptRows[0].count} departments`);
+    }
+    
+    // Check if default users exist
+    const [userRows] = await db.query('SELECT COUNT(*) as count FROM users');
+    if ((userRows[0] && userRows[0].count) === 0) {
+      console.log('No users found, creating default users...');
+      await createDefaultUsers();
+    } else {
+      console.log(`Found ${userRows[0].count} users`);
+    }
+  } catch (error) {
+    console.error('Error verifying essential data:', error);
+  }
+}
+
+// Function to create default users
+async function createDefaultUsers() {
+  try {
+    const bcrypt = require('bcryptjs');
+    const adminPassword = await bcrypt.hash('admin123', 10);
+    const authorPassword = await bcrypt.hash('author123', 10);
+    
+    await db.query(
+      `INSERT INTO users (name, email, password, role, department_id, designation)
+       VALUES (?, ?, ?, 'admin', 1, 'faculty')
+       ON DUPLICATE KEY UPDATE email = VALUES(email)`,
+      ['System Administrator', 'admin@bracu.ac.bd', adminPassword]
+    );
+
+    await db.query(
+      `INSERT INTO users (name, email, password, role, department_id, designation)
+       VALUES (?, ?, ?, 'author', 1, 'faculty')
+       ON DUPLICATE KEY UPDATE email = VALUES(email)`,
+      ['Sample Author', 'author@bracu.ac.bd', authorPassword]
+    );
+    
+    console.log('Default users created successfully');
+  } catch (error) {
+    console.error('Error creating default users:', error);
+  }
+}
 
 // Function to create tables automatically
 async function createTablesIfNotExist() {
@@ -127,8 +184,8 @@ async function createTablesIfNotExist() {
   const path = require('path');
   
   try {
-    // Read the PostgreSQL schema file
-    const schemaPath = path.join(__dirname, 'postgresql_schema.sql');
+    // Read the MySQL schema file
+    const schemaPath = path.join(__dirname, 'database_schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schema = fs.readFileSync(schemaPath, 'utf8');
       await db.query(schema);
@@ -147,50 +204,50 @@ async function createTablesIfNotExist() {
 async function createEssentialTables() {
   const tables = [
     `CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
+      id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password VARCHAR(255) NOT NULL,
       role VARCHAR(20) DEFAULT 'author',
-      department_id INTEGER,
-      faculty_id INTEGER,
+      department_id INT,
+      faculty_id INT,
       designation VARCHAR(20) DEFAULT 'student',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS departments (
-      id SERIAL PRIMARY KEY,
+      id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL UNIQUE,
       description TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS faculties (
-      id SERIAL PRIMARY KEY,
+      id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL UNIQUE,
       description TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS papers (
-      id SERIAL PRIMARY KEY,
+      id INT AUTO_INCREMENT PRIMARY KEY,
       title VARCHAR(500) NOT NULL,
       abstract TEXT NOT NULL,
       keywords TEXT,
       category_text VARCHAR(255),
-      author_id INTEGER NOT NULL,
+      author_id INT NOT NULL,
       corresponding_author VARCHAR(255),
       supervisor VARCHAR(255),
       co_supervisor VARCHAR(255),
-      department_id INTEGER,
+      department_id INT,
       publication_date DATE,
       doi VARCHAR(255),
       file_url VARCHAR(500),
       file_name VARCHAR(255),
-      file_size INTEGER,
+      file_size INT,
       status VARCHAR(20) DEFAULT 'pending',
       admin_notes TEXT,
-      version INTEGER DEFAULT 1,
+      version INT DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`
   ];
   
@@ -209,7 +266,7 @@ async function createEssentialTables() {
     ('Department of Law (LLB)', 'School of Law'),
     ('Department of Mathematics & Natural Sciences (MNS)', 'School of Data & Sciences'),
     ('Department of Pharmacy', 'School of Pharmacy')
-    ON CONFLICT (name) DO NOTHING
+    ON DUPLICATE KEY UPDATE name = VALUES(name)
   `);
   
   // Insert sample faculties/schools
@@ -221,7 +278,7 @@ async function createEssentialTables() {
     ('BSRM School of Engineering', 'Engineering disciplines including EEE'),
     ('School of Law', 'Legal studies and jurisprudence'),
     ('School of Pharmacy', 'Pharmaceutical sciences and practice')
-    ON CONFLICT (name) DO NOTHING
+    ON DUPLICATE KEY UPDATE name = VALUES(name)
   `);
   
   // Hash passwords properly for PostgreSQL
@@ -229,12 +286,18 @@ async function createEssentialTables() {
   const adminPassword = await bcrypt.hash('admin123', 10);
   const authorPassword = await bcrypt.hash('author123', 10);
   
-  await db.query(`
-    INSERT INTO users (name, email, password, role, department_id, designation) VALUES
-    ('System Administrator', 'admin@bracu.ac.bd', $1, 'admin', 1, 'faculty'),
-    ('Sample Author', 'author@bracu.ac.bd', $2, 'author', 1, 'faculty')
-    ON CONFLICT (email) DO NOTHING
-  `, [adminPassword, authorPassword]);
+  await db.query(
+    `INSERT INTO users (name, email, password, role, department_id, designation)
+     VALUES (?, ?, ?, 'admin', 1, 'faculty')
+     ON DUPLICATE KEY UPDATE email = VALUES(email)`,
+    ['System Administrator', 'admin@bracu.ac.bd', adminPassword]
+  );
+  await db.query(
+    `INSERT INTO users (name, email, password, role, department_id, designation)
+     VALUES (?, ?, ?, 'author', 1, 'faculty')
+     ON DUPLICATE KEY UPDATE email = VALUES(email)`,
+    ['Sample Author', 'author@bracu.ac.bd', authorPassword]
+  );
 }
 
 // Authentication Routes
@@ -245,39 +308,23 @@ app.post('/api/auth/register', async (req, res) => {
   
   try {
     // Check if user already exists
-    const checkQuery = 'SELECT id FROM users WHERE email = ?';
-    db.query(checkQuery, [email], async (err, results) => {
-      if (err) {
-        console.error('Error checking user:', err);
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      if (results.length > 0) {
-        return res.status(400).json({ error: 'User already exists' });
-      }
-      
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
-      
-      // Insert new user
-      const insertQuery = `
-        INSERT INTO users (name, email, password, role, department_id, faculty_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
-      `;
-      
-      const params = [name, email, hashedPassword, role, department_id, faculty_id];
-      
-      db.query(insertQuery, params, (err, result) => {
-        if (err) {
-          console.error('Error creating user:', err);
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        res.status(201).json({ 
-          message: 'User registered successfully',
-          id: result.insertId 
-        });
-      });
+    const [existing] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const insertQuery = `
+      INSERT INTO users (name, email, password, role, department_id, faculty_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW())
+    `;
+    const params = [name, email, hashedPassword, role, department_id, faculty_id];
+    const [result] = await db.query(insertQuery, params);
+
+    res.status(201).json({ 
+      message: 'User registered successfully',
+      id: result.insertId 
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -286,7 +333,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // User login
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   
   const query = `
@@ -297,54 +344,34 @@ app.post('/api/auth/login', (req, res) => {
     WHERE u.email = ?
   `;
   
-  db.query(query, [email], async (err, results) => {
-    if (err) {
-      console.error('Error fetching user:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
-    if (results.length === 0) {
+  try {
+    const [rows] = await db.query(query, [email]);
+    if (rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    
-    const user = results[0];
-    
-    try {
-      const validPassword = await bcrypt.compare(password, user.password);
-      
-      if (!validPassword) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-      
-      // Create JWT token
-      const token = jwt.sign(
-        { 
-          id: user.id, 
-          email: user.email, 
-          role: user.role,
-          name: user.name 
-        }, 
-        JWT_SECRET, 
-        { expiresIn: '24h' }
-      );
-      
-      // Remove password from response
-      delete user.password;
-      
-      res.json({
-        message: 'Login successful',
-        token,
-        user
-      });
-    } catch (error) {
-      console.error('Login error:', error);
-      res.status(500).json({ error: 'Login failed' });
+
+    const user = rows[0];
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-  });
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, name: user.name },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    delete user.password;
+    res.json({ message: 'Login successful', token, user });
+  } catch (err) {
+    console.error('Error fetching user:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get current user profile
-app.get('/api/auth/profile', authenticateToken, (req, res) => {
+app.get('/api/auth/profile', authenticateToken, async (req, res) => {
   const query = `
     SELECT u.id, u.name, u.email, u.role, u.department_id, u.faculty_id, u.designation, u.created_at, u.updated_at,
            d.name as department_name, f.name as faculty_name
@@ -354,22 +381,20 @@ app.get('/api/auth/profile', authenticateToken, (req, res) => {
     WHERE u.id = ?
   `;
   
-  db.query(query, [req.user.id], (err, results) => {
-    if (err) {
-      console.error('Error fetching profile:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
-    if (results.length === 0) {
+  try {
+    const [rows] = await db.query(query, [req.user.id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    res.json(results[0]);
-  });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error fetching profile:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Update user profile
-app.put('/api/auth/profile', authenticateToken, (req, res) => {
+app.put('/api/auth/profile', authenticateToken, async (req, res) => {
   const { name, department_id, faculty_id, designation } = req.body;
   
   // Validate required fields
@@ -385,17 +410,12 @@ app.put('/api/auth/profile', authenticateToken, (req, res) => {
   
   const params = [name, department_id, faculty_id, designation, req.user.id];
   
-  db.query(updateQuery, params, (err, result) => {
-    if (err) {
-      console.error('Error updating profile:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
+  try {
+    const [result] = await db.query(updateQuery, params);
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Fetch updated profile to return
+
     const fetchQuery = `
       SELECT u.id, u.name, u.email, u.role, u.department_id, u.faculty_id, u.designation, u.created_at, u.updated_at,
              d.name as department_name, f.name as faculty_name
@@ -404,22 +424,18 @@ app.put('/api/auth/profile', authenticateToken, (req, res) => {
       LEFT JOIN faculties f ON u.faculty_id = f.id
       WHERE u.id = ?
     `;
-    
-    db.query(fetchQuery, [req.user.id], (err, results) => {
-      if (err) {
-        console.error('Error fetching updated profile:', err);
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      res.json(results[0]);
-    });
-  });
+    const [rows] = await db.query(fetchQuery, [req.user.id]);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating profile:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // API Routes
 
 // Get all research papers (public - no auth required)
-app.get('/api/papers', (req, res) => {
+app.get('/api/papers', async (req, res) => {
   const query = `
     SELECT 
       p.*, 
@@ -434,19 +450,21 @@ app.get('/api/papers', (req, res) => {
     ORDER BY p.publication_date DESC
   `;
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching papers:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching papers:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get paper by ID (public - no auth required)
-app.get('/api/papers/:id', (req, res) => {
+app.get('/api/papers/:id', async (req, res) => {
   const { id } = req.params;
-  const query = `
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  let query = `
     SELECT 
       p.*, 
       u.name as author_name,
@@ -457,23 +475,45 @@ app.get('/api/papers/:id', (req, res) => {
     LEFT JOIN users u ON p.author_id = u.id
     LEFT JOIN departments d ON p.department_id = d.id
     LEFT JOIN faculties f ON p.faculty_id = f.id
-    WHERE p.id = ? AND p.status = 'approved'
+    WHERE p.id = ?
   `;
   
-  db.query(query, [id], (err, results) => {
-    if (err) {
-      console.error('Error fetching paper:', err);
-      return res.status(500).json({ error: 'Database error' });
+  // If no token provided, only show approved papers
+  if (!token) {
+    query += ` AND p.status = 'approved'`;
+  } else {
+    // Check if user is admin
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      const [userRows] = await db.query('SELECT role FROM users WHERE id = ?', [decoded.id]);
+      
+      // If user is admin, show all papers regardless of status
+      if (userRows.length > 0 && userRows[0].role === 'admin') {
+        // Admin can see all papers - no additional WHERE clause needed
+      } else {
+        // Non-admin users can only see approved papers
+        query += ` AND p.status = 'approved'`;
+      }
+    } catch (jwtError) {
+      // Invalid token, only show approved papers
+      query += ` AND p.status = 'approved'`;
     }
-    if (results.length === 0) {
+  }
+  
+  try {
+    const [rows] = await db.query(query, [id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Paper not found' });
     }
-    res.json(results[0]);
-  });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error fetching paper:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Search papers (public - no auth required)
-app.get('/api/search', (req, res) => {
+app.get('/api/search', async (req, res) => {
   const { q, department, category, year } = req.query;
   
   let query = `
@@ -505,62 +545,62 @@ app.get('/api/search', (req, res) => {
   }
   
   if (year) {
-    query += ` AND YEAR(p.publication_date) = ?`;
+    query += ` AND EXTRACT(YEAR FROM p.publication_date) = ?`;
     params.push(year);
   }
   
   query += ` ORDER BY p.publication_date DESC`;
   
-  db.query(query, params, (err, results) => {
-    if (err) {
-      console.error('Error searching papers:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error searching papers:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get departments (public - no auth required)
-app.get('/api/departments', (req, res) => {
+app.get('/api/departments', async (req, res) => {
   const query = 'SELECT * FROM departments ORDER BY name';
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching departments:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching departments:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get faculties (public - no auth required)
-app.get('/api/faculties', (req, res) => {
+app.get('/api/faculties', async (req, res) => {
   const query = 'SELECT * FROM faculties ORDER BY name';
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching faculties:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching faculties:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get authors (public - no auth required)
-app.get('/api/authors', (req, res) => {
+app.get('/api/authors', async (req, res) => {
   const query = 'SELECT * FROM authors ORDER BY name';
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching authors:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching authors:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get unique categories from papers (public - no auth required)
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
   const query = `
     SELECT DISTINCT category_text as name, category_text as id 
     FROM papers 
@@ -568,48 +608,84 @@ app.get('/api/categories', (req, res) => {
     ORDER BY category_text
   `;
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching categories:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching categories:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get dashboard statistics (public - no auth required)
-app.get('/api/stats', (req, res) => {
-  const queries = {
-    papers: "SELECT COUNT(*) as count FROM papers WHERE status = 'approved'",
-    authors: "SELECT COUNT(DISTINCT author_id) as count FROM papers WHERE status = 'approved'",
-    departments: 'SELECT COUNT(*) as count FROM departments',
-    // BRAC University was founded in 2001, so calculate years from 2001
-    years: 'SELECT (EXTRACT(YEAR FROM CURRENT_DATE) - 2001) as count'
-  };
+app.get('/api/stats', async (req, res) => {
+  try {
+    // Get approved papers count
+    const [papersResult] = await db.query("SELECT COUNT(*) as count FROM papers WHERE status = 'approved'");
+    const papersCount = papersResult[0]?.count || 0;
 
-  const stats = {};
-  let completedQueries = 0;
-  const totalQueries = Object.keys(queries).length;
+    // Get unique authors count from approved papers
+    const [authorsResult] = await db.query("SELECT COUNT(DISTINCT author_id) as count FROM papers WHERE status = 'approved'");
+    const authorsCount = authorsResult[0]?.count || 0;
 
-  Object.keys(queries).forEach(key => {
-    db.query(queries[key], (err, results) => {
-      if (err) {
-        console.error(`Error fetching ${key} stats:`, err);
-        stats[key] = 0;
-      } else {
-        stats[key] = results[0].count;
-      }
-      
-      completedQueries++;
-      if (completedQueries === totalQueries) {
-        res.json(stats);
-      }
+    // Get departments count
+    const [departmentsResult] = await db.query('SELECT COUNT(*) as count FROM departments');
+    const departmentsCount = departmentsResult[0]?.count || 0;
+
+    // Calculate BRAC University years (founded in 2001)
+    const currentYear = new Date().getFullYear();
+    const bracuYears = currentYear - 2001; // BRAC University was founded in 2001
+
+    console.log('Stats calculated:', {
+      papers: papersCount,
+      authors: authorsCount,
+      departments: departmentsCount,
+      years: bracuYears
     });
-  });
+
+    res.json({
+      papers: papersCount,
+      authors: authorsCount,
+      departments: departmentsCount,
+      years: bracuYears
+    });
+  } catch (err) {
+    console.error('Error fetching stats:', err);
+    // Return fallback values
+    const currentYear = new Date().getFullYear();
+    const bracuYears = currentYear - 2001;
+    res.json({ 
+      papers: 0, 
+      authors: 0, 
+      departments: 8, // BRAC University has 8 departments
+      years: bracuYears 
+    });
+  }
+});
+
+// Debug endpoint to check database status
+app.get('/api/debug/stats', async (req, res) => {
+  try {
+    const [papersAll] = await db.query('SELECT COUNT(*) as count FROM papers');
+    const [papersApproved] = await db.query("SELECT COUNT(*) as count FROM papers WHERE status = 'approved'");
+    const [departments] = await db.query('SELECT COUNT(*) as count FROM departments');
+    const [users] = await db.query('SELECT COUNT(*) as count FROM users');
+    
+    res.json({
+      totalPapers: papersAll[0]?.count || 0,
+      approvedPapers: papersApproved[0]?.count || 0,
+      departments: departments[0]?.count || 0,
+      users: users[0]?.count || 0,
+      bracuYears: new Date().getFullYear() - 2001
+    });
+  } catch (err) {
+    console.error('Debug stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Add new paper (requires author or admin auth)
-app.post('/api/papers', authenticateToken, requireAuthor, upload.single('file'), (req, res) => {
+app.post('/api/papers', authenticateToken, requireAuthor, upload.single('file'), async (req, res) => {
   const { title, abstract, keywords, category, department_id, publication_date, doi, corresponding_author, supervisor, co_supervisor, co_authors } = req.body;
   
   // Validate required fields
@@ -633,161 +709,129 @@ app.post('/api/papers', authenticateToken, requireAuthor, upload.single('file'),
     ADD COLUMN IF NOT EXISTS category_text VARCHAR(255) AFTER keywords
   `;
   
-  db.query(alterTableQuery, (alterErr) => {
-    if (alterErr) {
-      console.log('Columns might already exist or other error:', alterErr.message);
-    }
-    
-    const query = `
-      INSERT INTO papers (title, abstract, keywords, category_text, author_id, corresponding_author, supervisor, co_supervisor, department_id, publication_date, doi, file_url, file_name, file_size, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())
-    `;
-    
-    const params = [
-      title, 
-      abstract, 
-      keywords,
-      category, 
-      req.user.id,
-      corresponding_author,
-      supervisor || null,
-      co_supervisor || null,
-      department_id, 
-      publication_date, 
-      doi, 
-      fileUrl,
-      req.file.originalname,
-      req.file.size
-    ];
-  
-  db.query(query, params, (err, result) => {
-    if (err) {
-      console.error('Error adding paper:', err);
-      // Delete uploaded file if database insert fails
-      fs.unlinkSync(req.file.path);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
+  try {
+    await db.query(alterTableQuery);
+  } catch (alterErr) {
+    console.log('Columns might already exist or other error:', alterErr.message);
+  }
+
+  const insertPaperQuery = `
+    INSERT INTO papers (title, abstract, keywords, category_text, author_id, corresponding_author, supervisor, co_supervisor, department_id, publication_date, doi, file_url, file_name, file_size, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())
+  `;
+  const params = [
+    title,
+    abstract,
+    keywords,
+    category,
+    req.user.id,
+    corresponding_author,
+    supervisor || null,
+    co_supervisor || null,
+    department_id,
+    publication_date,
+    doi,
+    fileUrl,
+    req.file.originalname,
+    req.file.size
+  ];
+
+  try {
+    const [result] = await db.query(insertPaperQuery, params);
     const paperId = result.insertId;
-    
-    // Handle co-authors if provided
+
     if (co_authors && co_authors.length > 0) {
       try {
         const coAuthorsArray = JSON.parse(co_authors);
         if (Array.isArray(coAuthorsArray)) {
-          // First, add co_author_name column if it doesn't exist
-          const alterCoAuthorsQuery = `
-            ALTER TABLE co_authors 
-            ADD COLUMN IF NOT EXISTS co_author_name VARCHAR(255) AFTER paper_id
+          try {
+            await db.query(`
+              ALTER TABLE co_authors 
+              ADD COLUMN IF NOT EXISTS co_author_name VARCHAR(255) AFTER paper_id
+            `);
+          } catch (coAuthorAlterErr) {
+            console.log('Co-author column might already exist:', coAuthorAlterErr.message);
+          }
+
+          const insertCoAuthorQuery = `
+            INSERT INTO co_authors (paper_id, co_author_name, author_order, created_at)
+            VALUES (?, ?, ?, NOW())
           `;
-          
-          db.query(alterCoAuthorsQuery, (coAuthorAlterErr) => {
-            if (coAuthorAlterErr) {
-              console.log('Co-author column might already exist:', coAuthorAlterErr.message);
+          for (let index = 0; index < coAuthorsArray.length; index++) {
+            const coAuthor = coAuthorsArray[index];
+            if (coAuthor.name && coAuthor.name.trim()) {
+              await db.query(insertCoAuthorQuery, [paperId, coAuthor.name.trim(), coAuthor.order || index + 1]);
             }
-            
-            coAuthorsArray.forEach((coAuthor, index) => {
-              if (coAuthor.name && coAuthor.name.trim()) {
-                const coAuthorQuery = `
-                  INSERT INTO co_authors (paper_id, co_author_name, author_order, created_at)
-                  VALUES (?, ?, ?, NOW())
-                `;
-                db.query(coAuthorQuery, [paperId, coAuthor.name.trim(), coAuthor.order || index + 1]);
-              }
-            });
-          });
+          }
         }
       } catch (parseError) {
         console.error('Error parsing co-authors:', parseError);
-        // Don't fail the entire request for co-author parsing errors
       }
     }
-    
-    res.status(201).json({ 
-      message: 'Paper submitted successfully and pending approval', 
-      id: paperId,
-      fileUrl: fileUrl
-    });
-  });
-  });
+
+    res.status(201).json({ message: 'Paper submitted successfully and pending approval', id: paperId, fileUrl: fileUrl });
+  } catch (err) {
+    console.error('Error adding paper:', err);
+    fs.unlinkSync(req.file.path);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Update paper (requires author or admin auth)
-app.put('/api/papers/:id', authenticateToken, requireAuthor, (req, res) => {
+app.put('/api/papers/:id', authenticateToken, requireAuthor, async (req, res) => {
   const { id } = req.params;
   const { title, abstract, keywords, department_id, faculty_id, publication_date, doi, file_url } = req.body;
   
   // Check if user owns the paper or is admin
-  const checkQuery = 'SELECT author_id FROM papers WHERE id = ?';
-  db.query(checkQuery, [id], (err, results) => {
-    if (err) {
-      console.error('Error checking paper ownership:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
-    if (results.length === 0) {
+  try {
+    const [ownRows] = await db.query('SELECT author_id FROM papers WHERE id = ?', [id]);
+    if (ownRows.length === 0) {
       return res.status(404).json({ error: 'Paper not found' });
     }
-    
-    if (req.user.role !== 'admin' && results[0].author_id !== req.user.id) {
+    if (req.user.role !== 'admin' && ownRows[0].author_id !== req.user.id) {
       return res.status(403).json({ error: 'You can only edit your own papers' });
     }
-    
+
     const updateQuery = `
       UPDATE papers 
       SET title = ?, abstract = ?, keywords = ?, department_id = ?, 
           faculty_id = ?, publication_date = ?, doi = ?, file_url = ?, updated_at = NOW()
       WHERE id = ?
     `;
-    
     const params = [title, abstract, keywords, department_id, faculty_id, publication_date, doi, file_url, id];
-    
-    db.query(updateQuery, params, (err, result) => {
-      if (err) {
-        console.error('Error updating paper:', err);
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json({ message: 'Paper updated successfully' });
-    });
-  });
+    await db.query(updateQuery, params);
+    res.json({ message: 'Paper updated successfully' });
+  } catch (err) {
+    console.error('Error updating paper:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Delete paper (requires author or admin auth)
-app.delete('/api/papers/:id', authenticateToken, requireAuthor, (req, res) => {
+app.delete('/api/papers/:id', authenticateToken, requireAuthor, async (req, res) => {
   const { id } = req.params;
   
   // Check if user owns the paper or is admin
-  const checkQuery = 'SELECT author_id FROM papers WHERE id = ?';
-  db.query(checkQuery, [id], (err, results) => {
-    if (err) {
-      console.error('Error checking paper ownership:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    
-    if (results.length === 0) {
+  try {
+    const [rows] = await db.query('SELECT author_id FROM papers WHERE id = ?', [id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Paper not found' });
     }
-    
-    if (req.user.role !== 'admin' && results[0].author_id !== req.user.id) {
+    if (req.user.role !== 'admin' && rows[0].author_id !== req.user.id) {
       return res.status(403).json({ error: 'You can only delete your own papers' });
     }
-    
-    const deleteQuery = 'DELETE FROM papers WHERE id = ?';
-    
-    db.query(deleteQuery, [id], (err, result) => {
-      if (err) {
-        console.error('Error deleting paper:', err);
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json({ message: 'Paper deleted successfully' });
-    });
-  });
+    await db.query('DELETE FROM papers WHERE id = ?', [id]);
+    res.json({ message: 'Paper deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting paper:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Admin Routes
 
 // Get all papers for admin (including pending)
-app.get('/api/admin/papers', authenticateToken, requireAdmin, (req, res) => {
+app.get('/api/admin/papers', authenticateToken, requireAdmin, async (req, res) => {
   const query = `
     SELECT 
       p.*, 
@@ -801,17 +845,17 @@ app.get('/api/admin/papers', authenticateToken, requireAdmin, (req, res) => {
     ORDER BY p.created_at DESC
   `;
   
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching papers:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(results);
-  });
+  try {
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching papers:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Approve/reject paper (admin only)
-app.put('/api/admin/papers/:id/status', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/admin/papers/:id/status', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { status, admin_notes } = req.body;
   
@@ -827,29 +871,28 @@ app.put('/api/admin/papers/:id/status', authenticateToken, requireAdmin, (req, r
   
   const params = [status, admin_notes, id];
   
-  db.query(query, params, (err, result) => {
-    if (err) {
-      console.error('Error updating paper status:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
+  try {
+    const [result] = await db.query(query, params);
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Paper not found' });
     }
     res.json({ message: `Paper ${status} successfully` });
-  });
+  } catch (err) {
+    console.error('Error updating paper status:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get pending papers count (admin only)
-app.get('/api/admin/pending-count', authenticateToken, requireAdmin, (req, res) => {
-  const query = 'SELECT COUNT(*) as count FROM papers WHERE status = "pending"';
-  
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching pending count:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json({ count: results[0].count });
-  });
+app.get('/api/admin/pending-count', authenticateToken, requireAdmin, async (req, res) => {
+  const query = 'SELECT COUNT(*) as count FROM papers WHERE status = \'pending\'';
+  try {
+    const [rows] = await db.query(query);
+    res.json({ count: rows[0].count });
+  } catch (err) {
+    console.error('Error fetching pending count:', err);
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Serve static files from React build

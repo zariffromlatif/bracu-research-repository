@@ -22,7 +22,10 @@ const PaperDetail = () => {
   const fetchPaper = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`/api/papers/${id}`);
+      const token = localStorage.getItem('token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      
+      const response = await axios.get(`/api/papers/${id}`, { headers });
       setPaper(response.data);
     } catch (error) {
       console.error('Error fetching paper:', error);
@@ -137,7 +140,7 @@ const PaperDetail = () => {
             <div className="d-flex gap-2">
               {paper.file_url && (
                 <Button 
-                  href={paper.file_url} 
+                  href={`http://localhost:5000${paper.file_url}`} 
                   variant="primary" 
                   target="_blank"
                 >
@@ -234,7 +237,7 @@ const PaperDetail = () => {
                           <td>
                             {version.file_url && (
                               <Button 
-                                href={version.file_url} 
+                                href={`http://localhost:5000${version.file_url}`} 
                                 variant="outline-primary" 
                                 size="sm"
                                 target="_blank"
